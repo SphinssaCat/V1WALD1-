@@ -20,7 +20,7 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
 USER_TZ_OFFSET = int(os.environ.get("USER_TIMEZONE", "6"))  # Омск = UTC+6
 
-MODEL = "deepseek-chat
+MODEL = "deepseek-chat"
 API_URL = "https://api.deepseek.com/v1/chat/completions"
 TELEGRAM_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 

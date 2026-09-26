@@ -409,7 +409,6 @@ def main():
             if text:
                 new_messages.append(text)
         offset = update["update_id"] + 1
-        offset = update["update_id"] + 1
 
     if offset is not None:
         save_offset(offset)

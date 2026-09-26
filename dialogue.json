@@ -1,3 +1,4 @@
 {
-  "messages": []
+  "messages": [...],
+  "last_update_id": 12345
 }

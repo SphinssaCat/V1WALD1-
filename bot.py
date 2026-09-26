@@ -17,7 +17,11 @@ from datetime import datetime, timezone, timedelta
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
-USER_TZ_OFFSET = int(os.environ.get("USER_TIMEZONE", "6"))  # Омск = UTC+6
+
+try:
+    USER_TZ_OFFSET = int(os.environ.get("USER_TIMEZONE") or "6")
+except (ValueError, TypeError):
+    USER_TZ_OFFSET = 6  # Омск = UTC+6
 
 MODEL = "deepseek-chat"
 API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -28,16 +32,6 @@ HISTORY_FILE = "dialogue_history.json"
 OFFSET_FILE = "tg_offset.json"
 PROACTIVE_FILE = "last_proactive.json"
 MAX_HISTORY = 40
-
-# Проактивные сообщения
-MIN_HOURS = 2
-MAX_HOURS = 8
-PROACTIVE_CHANCE = 0.20
-NIGHT_START = 23
-NIGHT_END = 8
-
-# Веб-поиск
-WEB_SEARCH_ENABLED = True
 
 
 # ──────────────────────────────────────────────

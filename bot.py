@@ -163,7 +163,7 @@ def main():
     print("  Вивальди (Ви) - запуск")
     print("=" * 50)
 
-    user_tz = int(os.environ.get("USER_TIMEZONE", or "6"))
+    user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
     dialogue = load_dialogue()
     messages = dialogue.get("messages", [])
 

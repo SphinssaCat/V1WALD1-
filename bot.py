@@ -33,7 +33,7 @@ MIN_HOURS = 2        # не писать чаще, чем раз в 2 часа
 MAX_HOURS = 8        # если прошло больше — пишет обязательно
 PROACTIVE_CHANCE = 0.20  # 20% шанс между мин и макс
 NIGHT_START = 23     # не инициирует диалог после 23:00
-NIGHT_END = 8       # ...и до 08:00
+NIGHT_END = 8        # ...и до 08:00
 
 # Веб-поиск
 WEB_SEARCH_ENABLED = True
@@ -217,7 +217,7 @@ def call_deepseek(messages, temperature=0.8):
         return None
 
     data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    return data["choices"]["message"]["content"]
 
 
 # ──────────────────────────────────────────────
@@ -270,7 +270,7 @@ def save_history(history):
     if len(history) > MAX_HISTORY * 2:
         history = history[-(MAX_HISTORY * 2):]
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-    json.dump(history, f, ensure_ascii=False, indent=2)
+        json.dump(history, f, ensure_ascii=False, indent=2)
 
 def load_prompt():
     """Загружает системный промпт из файла."""

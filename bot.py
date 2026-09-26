@@ -6,7 +6,6 @@ GitHub Actions + Telegram + DeepSeek API.
 
 import os
 import json
-import time
 import random
 import requests
 from datetime import datetime, timezone, timedelta
@@ -18,8 +17,7 @@ from datetime import datetime, timezone, timedelta
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ID = os.environ.get("CHAT_ID", "")
-# По умолчанию ставим 6 (Омск), если переменная не задана
-USER_TZ_OFFSET = int(os.environ.get("USER_TIMEZONE", "6"))
+USER_TZ_OFFSET = int(os.environ.get("USER_TIMEZONE", "6"))  # Омск = UTC+6
 
 MODEL = "deepseek-chat"
 API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -47,12 +45,10 @@ WEB_SEARCH_ENABLED = True
 # ──────────────────────────────────────────────
 
 def get_user_time():
-    """Текущее время в часовом поясе пользователя."""
     tz = timezone(timedelta(hours=USER_TZ_OFFSET))
     return datetime.now(tz)
 
 def time_of_day_str(dt):
-    """Возвращает описание времени суток."""
     h = dt.hour
     if 5 <= h < 8:
         return "раннее утро, солнце только встаёт"
@@ -68,11 +64,9 @@ def time_of_day_str(dt):
         return "ночь"
 
 def is_night(dt):
-    """Проверяет, сейчас ли 'ночь' для проактивных сообщений."""
     return dt.hour >= NIGHT_START or dt.hour < NIGHT_END
 
 def get_weather():
-    """Получает текущую погоду через Open-Meteo."""
     try:
         url = "https://api.open-meteo.com/v1/forecast"
         params = {
@@ -105,7 +99,6 @@ def get_weather():
         return f"Погода: не удалось получить ({e})"
 
 def build_context_block():
-    """Собирает блок контекста: время, погода, дата."""
     now = get_user_time()
     tod = time_of_day_str(now)
     weather = get_weather()
@@ -140,7 +133,6 @@ def build_context_block():
 # ──────────────────────────────────────────────
 
 def web_search(query):
-    """Поиск через DuckDuckGo Instant Answer API."""
     if not WEB_SEARCH_ENABLED:
         return ""
     try:
@@ -171,7 +163,6 @@ def web_search(query):
 # ──────────────────────────────────────────────
 
 def call_deepseek(messages, temperature=0.8):
-    """Вызывает DeepSeek API и возвращает ответ."""
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -186,19 +177,18 @@ def call_deepseek(messages, temperature=0.8):
     resp = requests.post(API_URL, headers=headers, json=payload, timeout=60)
 
     if resp.status_code == 429:
-        print("⚠️ Лимит запросов DeepSeek исчерпан")
+        print("Лимит запросов DeepSeek исчерпан")
         return None
     if resp.status_code != 200:
-        print(f"❌ ОШИБКА API: {resp.status_code} {resp.text[:300]}")
+        print(f"ОШИБКА API: {resp.status_code} {resp.text[:300]}")
         return None
 
     data = resp.json()
-    
-    # ИСПРАВЛЕНИЕ: правильный доступ к списку choices
+
     if "choices" in data and len(data["choices"]) > 0:
         return data["choices"][0]["message"]["content"]
-    
-    print("❌ Не удалось извлечь ответ из API")
+
+    print("Не удалось извлечь ответ из API")
     return None
 
 
@@ -207,7 +197,6 @@ def call_deepseek(messages, temperature=0.8):
 # ──────────────────────────────────────────────
 
 def tg_send(text):
-    """Отправляет сообщение в Telegram."""
     url = f"{TELEGRAM_URL}/sendMessage"
     if len(text) > 4096:
         text = text[:4090] + "…"
@@ -216,25 +205,24 @@ def tg_send(text):
         "text": text,
     }, timeout=30)
     if resp.status_code != 200:
-        print(f"❌ ОШИБКА Telegram: {resp.status_code} {resp.text[:200]}")
+        print(f"ОШИБКА Telegram: {resp.status_code} {resp.text[:200]}")
     else:
-        print("✅ Сообщение отправлено в Telegram")
+        print("Сообщение отправлено в Telegram")
 
 def tg_get_updates(offset=None):
-    """Получает новые сообщения из Telegram."""
     url = f"{TELEGRAM_URL}/getUpdates"
     params = {"timeout": 0}
     if offset:
         params["offset"] = offset
     resp = requests.get(url, params=params, timeout=30)
     if resp.status_code != 200:
-        print(f"❌ ОШИБКА Telegram getUpdates: {resp.status_code}")
+        print(f"ОШИБКА Telegram getUpdates: {resp.status_code}")
         return []
     return resp.json().get("result", [])
 
 
 # ──────────────────────────────────────────────
-# ФАЙЛОВАЯ СИСТЕМА (ИСТОРИЯ И СОСТОЯНИЯ)
+# ФАЙЛОВАЯ СИСТЕМА
 # ──────────────────────────────────────────────
 
 def load_history():
@@ -255,7 +243,7 @@ def load_prompt():
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             return f.read().strip()
     except FileNotFoundError:
-        print("❌ Файл character_prompt.txt не найден!")
+        print("Файл character_prompt.txt не найден!")
         return "Ты — дружелюбный собеседник."
 
 def load_offset():
@@ -297,7 +285,7 @@ def build_messages(history, context_block, extra_context=""):
     return messages
 
 def process_user_message(text, history):
-    print(f"📨 Получено сообщение: {text[:100]}")
+    print(f"Получено сообщение: {text[:100]}")
 
     if text.strip().lower() == "/reset":
         save_history([])
@@ -314,7 +302,7 @@ def process_user_message(text, history):
                        "сколько стоит", "курс", "найди", "поищи", "узнай"]
     extra_context = ""
     if any(kw in text.lower() for kw in search_keywords):
-        print("🔍 Запущен веб-поиск...")
+        print("Запущен веб-поиск...")
         search_result = web_search(text)
         if search_result:
             extra_context = search_result
@@ -339,7 +327,7 @@ def maybe_proactive(history):
     now = get_user_time()
 
     if is_night(now):
-        print("🌙 Ночное время — пропускаем proactive")
+        print("Ночное время — пропускаем proactive")
         return
 
     last_proactive = load_last_proactive()
@@ -348,7 +336,7 @@ def maybe_proactive(history):
         hours_passed = (now - last_proactive).total_seconds() / 3600
 
     if hours_passed is not None and hours_passed < MIN_HOURS:
-        print(f"⏱ Прошло {hours_passed:.1f} ч — слишком рано для proactive")
+        print(f"Прошло {hours_passed:.1f} ч — слишком рано для proactive")
         return
 
     should_write = False
@@ -358,10 +346,10 @@ def maybe_proactive(history):
         should_write = random.random() < PROACTIVE_CHANCE
 
     if not should_write:
-        print("🎲 Кубик сказал не писать")
+        print("Кубик сказал не писать")
         return
 
-    print("✍️ Пишу proactive-сообщение...")
+    print("Пишу proactive-сообщение...")
     context_block = build_context_block()
 
     prompt_msg = {
@@ -393,16 +381,41 @@ def main():
     print(f"Время пользователя: {get_user_time().strftime('%Y-%m-%d %H:%M:%S')}")
 
     if not DEEPSEEK_API_KEY:
-        print("❌ ОШИБКА: DEEPSEEK_API_KEY не задан")
+        print("ОШИБКА: DEEPSEEK_API_KEY не задан")
         return
     if not TELEGRAM_TOKEN:
-        print("❌ ОШИБКА: TELEGRAM_TOKEN не задан")
+        print("ОШИБКА: TELEGRAM_TOKEN не задан")
         return
     if not CHAT_ID:
-        print("❌ ОШИБКА: CHAT_ID не задан")
+        print("ОШИБКА: CHAT_ID не задан")
         return
 
     history = load_history()
-    print(f"📖 История: {len(history)} сообщений")
+    print(f"История: {len(history)} сообщений")
 
-    offset = load
+    offset = load_offset()
+    updates = tg_get_updates(offset)
+
+    new_messages = []
+    for update in updates:
+        if "message" in update and update["message"].get("chat", {}).get("id") == int(CHAT_ID):
+            text = update["message"].get("text", "")
+            if text:
+                new_messages.append(text)
+        offset = update["update_id"] + 1
+
+    if offset:
+        save_offset(offset)
+
+    for msg_text in new_messages:
+        history = process_user_message(msg_text, history)
+
+    if not new_messages:
+        maybe_proactive(history)
+
+    save_history(history)
+    print("Готово")
+
+
+if __name__ == "__main__":
+    main()

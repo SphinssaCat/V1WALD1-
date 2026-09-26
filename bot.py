@@ -9,10 +9,9 @@ from zoneinfo import ZoneInfo
 MODEL = "mistral-small-latest"
 API_URL = "https://api.mistral.ai/v1/chat/completions"
 
-# Проактивные сообщения
-MAX_PROACTIVE_PER_DAY = 2       # Максимум 2 proactive-сообщения в день
-MIN_HOURS_BETWEEN = 5           # Минимум 5 часов между proactive-сообщениями
-PROACTIVE_CHANCE = 0.25         # 25% шанс при каждой проверке
+MAX_PROACTIVE_PER_DAY = 2
+MIN_HOURS_BETWEEN = 5
+PROACTIVE_CHANCE = 0.25
 NIGHT_START = 23
 NIGHT_END = 8
 
@@ -26,12 +25,15 @@ CITY_LON = 73.37
 
 def load_dialogue():
     if not os.path.exists(DIALOGUE_FILE):
-        return {"messages": []}
+        return {"messages": [], "last_update_id": 0}
     try:
         with open(DIALOGUE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if "last_update_id" not in data:
+                data["last_update_id"] = 0
+            return data
     except Exception:
-        return {"messages": []}
+        return {"messages": [], "last_update_id": 0}
 
 
 def save_dialogue(data):
@@ -139,24 +141,40 @@ def send_telegram(text):
         return False
 
 
-def get_new_telegram_updates():
-    """Получает новые сообщения из Telegram через getUpdates."""
+def get_new_telegram_updates(last_update_id):
+    """Получает новые сообщения и подтверждает их получение."""
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/getUpdates"
     try:
-        r = requests.get(url, params={"timeout": 0, "offset": -1}, timeout=10)
+        # offset = last_update_id + 1 — получить только новые, неподтверждённые сообщения
+        r = requests.get(url, params={
+            "timeout": 0,
+            "offset": last_update_id + 1,
+            "limit": 10
+        }, timeout=10)
         if r.status_code != 200:
             print(f"Telegram getUpdates Error: {r.status_code}")
-            return []
+            return [], last_update_id
         updates = r.json().get("result", [])
         result = []
+        new_last_id = last_update_id
         for u in updates:
+            new_last_id = max(new_last_id, u["update_id"])
             if "message" in u and "text" in u["message"]:
                 if str(u["message"]["chat"]["id"]) == os.environ.get("CHAT_ID"):
                     result.append(u["message"]["text"])
-        return result
+
+        # Подтверждаем получение — Telegram больше не будет присылать эти сообщения
+        if new_last_id > last_update_id:
+            requests.get(url, params={
+                "timeout": 0,
+                "offset": new_last_id + 1,
+                "limit": 1
+            }, timeout=5)
+
+        return result, new_last_id
     except Exception as e:
         print(f"Ошибка получения обновлений Telegram: {e}")
-        return []
+        return [], last_update_id
 
 
 def main():
@@ -167,10 +185,12 @@ def main():
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
     dialogue = load_dialogue()
     messages = dialogue.get("messages", [])
+    last_update_id = dialogue.get("last_update_id", 0)
 
     context_block, is_night, now = get_context_block(user_tz)
     print(f"Время пользователя: {now.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"История: {len(messages)} сообщений")
+    print(f"Последний update_id: {last_update_id}")
 
     try:
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
@@ -194,19 +214,19 @@ def main():
         f"- Упоминай время суток и погоду, если это естественно в разговоре.\n"
     )
 
-    # --- ШАГ 1: Проверяем новые сообщения ---
-    new_texts = get_new_telegram_updates()
+    # --- ШАГ 1: Получаем новые сообщения ---
+    new_texts, new_update_id = get_new_telegram_updates(last_update_id)
 
-    last_user_msg = None
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            last_user_msg = msg.get("content")
-            break
+    # Сразу сохраняем update_id, чтобы не получить те же сообщения снова
+    if new_update_id > last_update_id:
+        dialogue["last_update_id"] = new_update_id
+        save_dialogue(dialogue)
+        last_update_id = new_update_id
 
-    fresh = []
+    # Обрабатываем команды
     for text in new_texts:
         if text.strip().lower() == "/reset":
-            save_dialogue({"messages": []})
+            save_dialogue({"messages": [], "last_update_id": last_update_id})
             send_telegram("...всё. Я забыл. Чистый лист. Ну, привет.")
             print("Команда /reset - история очищена.")
             return
@@ -214,12 +234,17 @@ def main():
             send_telegram(f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. Время UTC{user_tz:+d}.")
             print("Команда /time - время отправлено.")
             return
-        if text != last_user_msg:
-            fresh.append(text)
+
+    # Фильтруем сообщения (берём только текстовые, без команд)
+    fresh = [t for t in new_texts if not t.strip().lower().startswith("/")]
 
     if fresh:
+        # СОХРАНЯЕМ сообщения пользователя ДО вызова API
         for text in fresh:
             messages.append({"role": "user", "content": text, "timestamp": now.isoformat()})
+
+        dialogue["messages"] = messages
+        save_dialogue(dialogue)
 
         print(f"Получено новых сообщений: {len(fresh)}")
         print(f"Отвечаю на: {fresh[-1][:80]}...")
@@ -232,10 +257,11 @@ def main():
         if response:
             send_telegram(response)
             messages.append({"role": "assistant", "content": response, "is_proactive": False, "timestamp": now.isoformat()})
-            save_dialogue({"messages": messages})
+            dialogue["messages"] = messages
+            save_dialogue(dialogue)
             print("Ответ отправлен.")
         else:
-            print("Не удалось получить ответ от AI.")
+            print("Не удалось получить ответ от AI. Сообщения пользователя сохранены, повторно не будут обработаны.")
         return
 
     # --- ШАГ 2: Нет новых сообщений - решаем про proactive ---
@@ -287,7 +313,8 @@ def main():
         if response:
             send_telegram(response)
             messages.append({"role": "assistant", "content": response, "is_proactive": True, "timestamp": now.isoformat()})
-            save_dialogue({"messages": messages})
+            dialogue["messages"] = messages
+            save_dialogue(dialogue)
             print("Proactive-сообщение отправлено!")
         else:
             print("Не удалось получить ответ от AI.")

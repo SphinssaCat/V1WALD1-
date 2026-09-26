@@ -1,0 +1,11 @@
+name: Test DeepSeek Key
+on: workflow_dispatch
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run test script
+        run: chmod +x test_key.sh && ./test_key.sh
+        env:
+          DEEPSEEK_API_KEY: \${{ secrets.DEEPSEEK_API_KEY }}

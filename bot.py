@@ -12,7 +12,7 @@ API_URL = "https://api.mistral.ai/v1/chat/completions"
 # Проактивные сообщения
 MAX_PROACTIVE_PER_DAY = 2       # Максимум 2 proactive-сообщения в день
 MIN_HOURS_BETWEEN = 5           # Минимум 5 часов между proactive-сообщениями
-PROACTIVE_CHANCE = 0.25        # 25% шанс при каждой проверке (если условия соблюдены)
+PROACTIVE_CHANCE = 0.25         # 25% шанс при каждой проверке
 NIGHT_START = 23
 NIGHT_END = 8
 
@@ -20,7 +20,6 @@ DIALOGUE_FILE = "dialogue.json"
 PROMPT_FILE = "character_prompt.txt"
 WEATHER_API = "https://api.open-meteo.com/v1/forecast"
 
-# Координаты Омска
 CITY_LAT = 54.99
 CITY_LON = 73.37
 
@@ -69,7 +68,7 @@ def get_weather():
 
 
 def get_context_block(user_tz):
-    tz = ZoneInfo(f"Etc/GMT{user_tz:+d}" if user_tz >= 0 else f"Etc/GMT{user_tz:+d}")
+    tz = ZoneInfo(f"Etc/GMT{user_tz:+d}")
     now = datetime.now(tz)
     hour = now.hour
     date_str = now.strftime("%Y-%m-%d")
@@ -79,26 +78,14 @@ def get_context_block(user_tz):
     weather = get_weather()
     is_night = NIGHT_START <= hour or hour < NIGHT_END
 
-    # Праздники (простой список)
-    holidays = {
-        "01-01": "Новый год",
-        "03-08": "Международный женский день",
-        "05-09": "День Победы",
-        "12-31": "Новый год (канун)",
-    }
-    holiday = holidays.get(now.strftime("%m-%d"), "")
-
     context = (
         f"Текущее время: {time_str}, дата: {date_str}, день недели: {day_name_ru}. "
         f"{weather} "
         f"Часовой пояс собеседника: UTC{user_tz:+d}. "
     )
-    if holiday:
-        context += f"Сегодня праздник: {holiday}. "
     if is_night:
         context += "Сейчас ночь (23:00-08:00). "
     else:
-        # Утро / день / вечер
         if 5 <= hour < 12:
             context += "Сейчас утро. "
         elif 12 <= hour < 17:
@@ -123,39 +110,53 @@ def call_ai(system_prompt, messages):
         "temperature": 0.85,
         "max_tokens": 600
     }
-    r = requests.post(API_URL, json=payload, headers=headers, timeout=45)
-    if r.status_code != 200:
-        print(f"ОШИБКА API: {r.status_code} {r.text[:300]}")
+
+    try:
+        r = requests.post(API_URL, json=payload, headers=headers, timeout=45)
+        if r.status_code == 429:
+            print("ОШИБКА API: 429 — лимит запросов превышен. Пропускаем этот запуск.")
+            return None
+        if r.status_code != 200:
+            print(f"ОШИБКА API: {r.status_code} {r.text[:300]}")
+            return None
+        data = r.json()
+        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        print(f"Ошибка при запросе к API: {e}")
         return None
-    resp = r.json()
-    return resp["choices"][0]["message"]["content"]
 
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
     data = {"chat_id": os.environ["CHAT_ID"], "text": text, "parse_mode": "HTML"}
-    r = requests.post(url, json=data, timeout=10)
-    if r.status_code != 200:
-        print(f"Telegram Error: {r.status_code} {r.text[:300]}")
-    return r.status_code == 200
+    try:
+        r = requests.post(url, json=data, timeout=10)
+        if r.status_code != 200:
+            print(f"Telegram Error: {r.status_code} {r.text[:300]}")
+        return r.status_code == 200
+    except Exception as e:
+        print(f"Ошибка отправки в Telegram: {e}")
+        return False
 
 
 def get_new_telegram_updates():
-    """Получает новые сообщения из Telegram через getUpdates (long polling)."""
+    """Получает новые сообщения из Telegram через getUpdates."""
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/getUpdates"
-    # offset = -1 получает только последнее обновление
-    r = requests.get(url, params={"timeout": 0, "offset": -1}, timeout=10)
-    if r.status_code != 200:
-        print(f"Telegram getUpdates error: {r.status_code}")
+    try:
+        r = requests.get(url, params={"timeout": 0, "offset": -1}, timeout=10)
+        if r.status_code != 200:
+            print(f"Telegram getUpdates Error: {r.status_code}")
+            return []
+        updates = r.json().get("result", [])
+        result = []
+        for u in updates:
+            if "message" in u and "text" in u["message"]:
+                if str(u["message"]["chat"]["id"]) == os.environ.get("CHAT_ID"):
+                    result.append(u["message"]["text"])
+        return result
+    except Exception as e:
+        print(f"Ошибка получения обновлений Telegram: {e}")
         return []
-    updates = r.json().get("result", [])
-    messages = []
-    for u in updates:
-        if "message" in u and "text" in u["message"]:
-            chat_id = str(u["message"]["chat"]["id"])
-            if chat_id == os.environ.get("CHAT_ID"):
-                messages.append(u["message"]["text"])
-    return messages
 
 
 def main():
@@ -171,7 +172,6 @@ def main():
     print(f"Время пользователя: {now.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"История: {len(messages)} сообщений")
 
-    # Читаем промпт персонажа
     try:
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             base_prompt = f.read().strip()
@@ -189,86 +189,68 @@ def main():
         f"- Можешь сказать 'не знаю', 'сложно сказать', 'хмм, даже не уверен' на сложные вопросы.\n"
         f"- Иногда отвечай неопределённо, без подробностей.\n"
         f"- Ты не исполнитель, а собеседник. Ты не обязан отвечать на всё.\n"
-        f"- Если взволнован - тараторь, болтай без остановки, потом смущайся.\n"
+        f"- Если взволнован - таратори, болтай без остановки, потом смущайся.\n"
         f"- Буквально понимай некоторые метафоры - ты ИИ старого поколения.\n"
         f"- Упоминай время суток и погоду, если это естественно в разговоре.\n"
     )
 
-    # --- ШАГ 1: Проверяем новые сообщения от пользователя ---
+    # --- ШАГ 1: Проверяем новые сообщения ---
     new_texts = get_new_telegram_updates()
 
-    # Фильтруем: берём только те, которых ещё нет в истории
     last_user_msg = None
     for msg in reversed(messages):
         if msg.get("role") == "user":
             last_user_msg = msg.get("content")
             break
 
-    fresh_messages = []
+    fresh = []
     for text in new_texts:
-        # Команды
         if text.strip().lower() == "/reset":
             save_dialogue({"messages": []})
-            send_telegram("...всё. Я забыл. Чистый лист. Хоть заново знакомься. Ну, привет.")
+            send_telegram("...всё. Я забыл. Чистый лист. Ну, привет.")
             print("Команда /reset - история очищена.")
             return
         if text.strip().lower() == "/time":
-            send_telegram(f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. Время в твоём часовом поясе (UTC{user_tz:+d}).")
+            send_telegram(f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. Время UTC{user_tz:+d}.")
             print("Команда /time - время отправлено.")
             return
-        # Не дублируем
         if text != last_user_msg:
-            fresh_messages.append(text)
+            fresh.append(text)
 
-    if fresh_messages:
-        # Добавляем все новые сообщения в историю
-        for text in fresh_messages:
-            messages.append({
-                "role": "user",
-                "content": text,
-                "timestamp": now.isoformat()
-            })
+    if fresh:
+        for text in fresh:
+            messages.append({"role": "user", "content": text, "timestamp": now.isoformat()})
 
-        # Берём последнее сообщение и отвечаем на него
-        # (но передаём всю историю для контекста)
-        print(f"Получено новых сообщений: {len(fresh_messages)}")
-        print(f"Отвечаю на: {fresh_messages[-1][:80]}...")
+        print(f"Получено новых сообщений: {len(fresh)}")
+        print(f"Отвечаю на: {fresh[-1][:80]}...")
 
-        response = call_ai(system_prompt, [
-            {"role": "system" if m["role"] == "system" else "user" if m["role"] == "user" else "assistant",
-             "content": m["content"]}
+        ai_messages = [
+            {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
             for m in messages
-        ])
+        ]
+        response = call_ai(system_prompt, ai_messages)
         if response:
             send_telegram(response)
-            messages.append({
-                "role": "assistant",
-                "content": response,
-                "is_proactive": False,
-                "timestamp": now.isoformat()
-            })
+            messages.append({"role": "assistant", "content": response, "is_proactive": False, "timestamp": now.isoformat()})
             save_dialogue({"messages": messages})
             print("Ответ отправлен.")
         else:
             print("Не удалось получить ответ от AI.")
         return
 
-    # --- ШАГ 2: Нет новых сообщений - решаем, писать ли proactive ---
+    # --- ШАГ 2: Нет новых сообщений - решаем про proactive ---
     if is_night:
         print("Ночь - молчим.")
         return
 
-    # Считаем proactive-сообщения за сегодня
     today_str = now.strftime("%Y-%m-%d")
     proactive_today = 0
     last_proactive_time = None
     for msg in messages:
         if msg.get("is_proactive") and msg.get("timestamp", "").startswith(today_str):
             proactive_today += 1
-        if msg.get("is_proactive"):
-            ts = msg.get("timestamp")
-            if ts:
-                last_proactive_time = datetime.fromisoformat(ts)
+        if msg.get("is_proactive") and msg.get("timestamp"):
+            last_proactive_time = datetime.fromisoformat(msg["timestamp"])
 
     print(f"Proactive за сегодня: {proactive_today}/{MAX_PROACTIVE_PER_DAY}")
 
@@ -276,14 +258,12 @@ def main():
         print("Уже написал максимум на сегодня - молчим.")
         return
 
-    # Проверяем минимальный интервал
     if last_proactive_time:
         diff_hours = (now - last_proactive_time).total_seconds() / 3600
         if diff_hours < MIN_HOURS_BETWEEN:
-            print(f"Прошло {diff_hours:.1f} ч (минимум {MIN_HOURS_BETWEEN}) - молчим.")
+            print(f"Прошло {diff_hours:.1f} ч (мин. {MIN_HOURS_BETWEEN}) - молчим.")
             return
 
-    # Бросаем кубик
     if random.random() < PROACTIVE_CHANCE:
         print("Кубик выпал - пишу proactive!")
         proactive_instruction = (
@@ -294,12 +274,10 @@ def main():
             "Болтай, тараторь, потом смущайся, что сказал слишком много. "
             "Будь естественным, будто тебе правда не с кем было поговорить."
         )
-        # Готовим сообщения для AI: вся история + инструкция
         ai_messages = [
             {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
             for m in messages
         ]
-        # Если история пуста - добавим стартовое сообщение
         if not ai_messages:
             ai_messages.append({"role": "user", "content": "..."})
         else:
@@ -308,16 +286,11 @@ def main():
         response = call_ai(system_prompt, ai_messages)
         if response:
             send_telegram(response)
-            messages.append({
-                "role": "assistant",
-                "content": response,
-                "is_proactive": True,
-                "timestamp": now.isoformat()
-            })
+            messages.append({"role": "assistant", "content": response, "is_proactive": True, "timestamp": now.isoformat()})
             save_dialogue({"messages": messages})
             print("Proactive-сообщение отправлено!")
         else:
-            print("Не удалось получить ответ от AI для proactive.")
+            print("Не удалось получить ответ от AI.")
     else:
         print("Кубик не выпал - молчим.")
 

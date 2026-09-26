@@ -402,7 +402,7 @@ def main():
     offset = load_offset()
     updates = tg_get_updates(offset)
 
-    new_messages = []
+        new_messages = []
     for update in updates:
         if "message" in update and update["message"].get("chat", {}).get("id") == int(CHAT_ID):
             text = update["message"].get("text", "")
@@ -411,3 +411,17 @@ def main():
         offset = update["update_id"] + 1
 
     if offset is not None:
+        save_offset(offset)
+
+    for msg_text in new_messages:
+        history = process_user_message(msg_text, history)
+
+    if not new_messages:
+        maybe_proactive(history)
+
+    save_history(history)
+    print("Готово")
+
+
+if __name__ == "__main__":
+    main()

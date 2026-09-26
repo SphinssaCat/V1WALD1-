@@ -1,4 +1,5 @@
 echo "Проверяю DEEPSEEK_API_KEY..."
+
 if [ -z "\$DEEPSEEK_API_KEY" ]; then
   echo "❌ ОШИБКА: Переменная DEEPSEEK_API_KEY пуста!"
   exit 1

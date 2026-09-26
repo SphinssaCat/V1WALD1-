@@ -1,4 +1,10 @@
 {
-  "messages": [...],
-  "last_update_id": 12345
+  "messages": [
+    {
+      "role": "user",
+      "content": "Привет?",
+      "timestamp": "2026-09-26T07:31:14.356561-06:00"
+    }
+  ],
+  "last_update_id": 286601959
 }

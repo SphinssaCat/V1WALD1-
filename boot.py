@@ -1,12 +1,14 @@
 import os
 import json
 import random
+import time
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from openai import OpenAI
+from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
-MODEL = "deepseek-chat"  # или deepseek-reasoner, если нужен рассуждающий режим
+MODEL = "deepseek-chat"
 MAX_PROACTIVE_PER_DAY = 2
 MIN_HOURS_BETWEEN = 5
 PROACTIVE_CHANCE = 0.25
@@ -25,6 +27,7 @@ client = OpenAI(
     base_url=os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 )
 
+
 def load_dialogue():
     if not os.path.exists(DIALOGUE_FILE):
         return {"messages": [], "last_update_id": 0}
@@ -37,13 +40,14 @@ def load_dialogue():
     except Exception:
         return {"messages": [], "last_update_id": 0}
 
+
 def save_dialogue(data):
     with open(DIALOGUE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+
 def get_weather():
     try:
-        import requests
         r = requests.get(WEATHER_API, params={
             "latitude": CITY_LAT, "longitude": CITY_LON,
             "current_weather": True, "daily": False
@@ -61,6 +65,7 @@ def get_weather():
             return f"На улице в Омске сейчас {int(temp)}°C, {desc}."
     except Exception: pass
     return "Погоду узнать не удалось."
+
 
 def get_context_block(user_tz):
     tz = ZoneInfo(f"Etc/GMT{user_tz:+d}")
@@ -83,22 +88,40 @@ def get_context_block(user_tz):
         elif 17 <= hour < 23: context += "Сейчас вечер. "
     return context, is_night, now
 
+
 def call_ai(system_prompt, messages):
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[{"role": "system", "content": system_prompt}, *messages],
-            temperature=0.85,
-            max_tokens=600
-        )
-        return resp.choices[0].message.content
-    except Exception as e:
-        print(f"Ошибка AI: {e}")
-        # Здесь можно отдельно ловить 429, если нужно
-        return None
+    max_retries = 3
+    retry_delay = 10  # базовая задержка в секундах
+
+    for attempt in range(max_retries):
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role": "system", "content": system_prompt}, *messages],
+                temperature=0.85,
+                max_tokens=600
+            )
+            return resp.choices[0].message.content
+
+        except RateLimitError as e:
+            print(f"Лимит API (попытка {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)  # 10, 20, 40 секунд
+                print(f"Ждём {wait_time} секунд перед повтором...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print("Все попытки исчерпаны — лимит не снялся.")
+                return None
+
+        except Exception as e:
+            print(f"Ошибка AI: {e}")
+            return None
+
+    return None
+
 
 def send_telegram(text):
-    import requests
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/sendMessage"
     data = {"chat_id": os.environ["CHAT_ID"], "text": text, "parse_mode": "HTML"}
     try:
@@ -109,8 +132,8 @@ def send_telegram(text):
         print(f"Ошибка отправки в Telegram: {e}")
         return False
 
+
 def get_new_telegram_updates(last_update_id):
-    import requests
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/getUpdates"
     try:
         r = requests.get(url, params={"timeout": 0, "offset": last_update_id + 1, "limit": 10}, timeout=10)
@@ -130,9 +153,10 @@ def get_new_telegram_updates(last_update_id):
         print(f"Ошибка получения обновлений Telegram: {e}")
         return [], last_update_id
 
+
 def main():
     print("=" * 50)
-    print("  Вивальди (Ви) - запуск (DeepSeek)")
+    print("  Вивальди (Ви) - запуск (DeepSeek + retry)")
     print("=" * 50)
 
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
@@ -243,6 +267,7 @@ def main():
             print("Proactive-сообщение отправлено!")
     else:
         print("Кубик не выпал - молчим.")
+
 
 if __name__ == "__main__":
     main()

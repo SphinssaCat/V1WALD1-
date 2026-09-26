@@ -298,7 +298,7 @@ def save_offset(offset):
 # ОСНОВНАЯ ЛОГИКА
 # ──────────────────────────────────────────────
 
-def build_messages(history, context_block, extra_context=" ""):
+def build_messages(history, context_block, extra_context=""):
     """Собирает массив сообщений для DeepSeek."""
     prompt = load_prompt()
     system_content = prompt + "\n\n" + context_block

@@ -181,6 +181,8 @@ def main():
     print("  Вивальди (Ви) - запуск (OpenRouter)")
     print("=" * 50)
 
+    print(f"DEBUG: OPENROUTER_API_KEY = {'[скрыт]' if os.environ.get('OPENROUTER_API_KEY' else '[ПУСТО]'}")
+
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
     dialogue = load_dialogue()
     messages = dialogue.get("messages", [])

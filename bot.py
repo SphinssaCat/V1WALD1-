@@ -242,6 +242,26 @@ def main():
         dialogue["last_update_id"] = new_update_id
         save_dialogue(dialogue)
         last_update_id = new_update_id
+        
+    # --- ТЕСТОВЫЙ РЕЖИМ: проверка character_prompt.txt ---
+    for text in new_texts:
+        if text.strip().lower() == "/checkprompt":
+            try:
+                with open(PROMPT_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+                send_telegram(
+                    f"✅ Файл {PROMPT_FILE} найден!\n\n"
+                    f"<code>{content}</code>"
+                )
+                print("Команда /checkprompt - файл прочитан и отправлен.")
+            except FileNotFoundError:
+                send_telegram(f"❌ Файл {PROMPT_FILE} не найден!")
+                print(f"Ошибка: {PROMPT_FILE} отсутствует.")
+            except Exception as e:
+                send_telegram(f"❌ Ошибка чтения файла: {e}")
+                print(f"Ошибка чтения: {e}")
+            return  # завершаем main(), чтобы не обрабатывать остальные сообщения в этом запуске
+    # ----------------------------------------------------
 
     # Обрабатываем команды
     for text in new_texts:

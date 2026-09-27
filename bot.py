@@ -1,14 +1,14 @@
 import os
 import json
 import random
+import time
 import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
-MODEL = "mistral-small-latest"
-API_URL = "https://api.mistral.ai/v1/chat/completions"
-
+MODEL = "meta-llama/llama-3.1-8b-instruct:free"
 MAX_PROACTIVE_PER_DAY = 2
 MIN_HOURS_BETWEEN = 5
 PROACTIVE_CHANCE = 0.25
@@ -21,6 +21,11 @@ WEATHER_API = "https://api.open-meteo.com/v1/forecast"
 
 CITY_LAT = 54.99
 CITY_LON = 73.37
+
+client = OpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.environ["OPENROUTER_API_KEY"]
+)
 
 
 def load_dialogue():
@@ -75,15 +80,13 @@ def get_context_block(user_tz):
     hour = now.hour
     date_str = now.strftime("%Y-%m-%d")
     time_str = now.strftime("%H:%M")
-    day_name_ru = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"][now.weekday()]
-
+    day_name_ru = ["понедельник", "вторник", "среда", "четверг", "пятница",
+                   "суббота", "воскресенье"][now.weekday()]
     weather = get_weather()
     is_night = NIGHT_START <= hour or hour < NIGHT_END
-
     context = (
         f"Текущее время: {time_str}, дата: {date_str}, день недели: {day_name_ru}. "
-        f"{weather} "
-        f"Часовой пояс собеседника: UTC{user_tz:+d}. "
+        f"{weather} Часовой пояс собеседника: UTC{user_tz:+d}. "
     )
     if is_night:
         context += "Сейчас ночь (23:00-08:00). "
@@ -94,38 +97,39 @@ def get_context_block(user_tz):
             context += "Сейчас день. "
         elif 17 <= hour < 23:
             context += "Сейчас вечер. "
-
     return context, is_night, now
 
 
 def call_ai(system_prompt, messages):
-    headers = {
-        "Authorization": f"Bearer {os.environ['MISTRAL_API_KEY']}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *messages
-        ],
-        "temperature": 0.85,
-        "max_tokens": 600
-    }
+    max_retries = 3
+    retry_delay = 10
 
-    try:
-        r = requests.post(API_URL, json=payload, headers=headers, timeout=45)
-        if r.status_code == 429:
-            print("ОШИБКА API: 429 — лимит запросов превышен. Пропускаем этот запуск.")
+    for attempt in range(max_retries):
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL,
+                messages=[{"role": "system", "content": system_prompt}, *messages],
+                temperature=0.85,
+                max_tokens=600
+            )
+            return resp.choices[0].message.content
+
+        except RateLimitError as e:
+            print(f"Лимит API (попытка {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"Ждём {wait_time} секунд перед повтором...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print("Все попытки исчерпаны — лимит не снялся.")
+                return None
+
+        except Exception as e:
+            print(f"Ошибка AI: {e}")
             return None
-        if r.status_code != 200:
-            print(f"ОШИБКА API: {r.status_code} {r.text[:300]}")
-            return None
-        data = r.json()
-        return data["choices"][0]["message"]["content"]
-    except Exception as e:
-        print(f"Ошибка при запросе к API: {e}")
-        return None
+
+    return None
 
 
 def send_telegram(text):
@@ -142,10 +146,8 @@ def send_telegram(text):
 
 
 def get_new_telegram_updates(last_update_id):
-    """Получает новые сообщения и подтверждает их получение."""
     url = f"https://api.telegram.org/bot{os.environ['TELEGRAM_TOKEN']}/getUpdates"
     try:
-        # offset = last_update_id + 1 — получить только новые, неподтверждённые сообщения
         r = requests.get(url, params={
             "timeout": 0,
             "offset": last_update_id + 1,
@@ -162,15 +164,12 @@ def get_new_telegram_updates(last_update_id):
             if "message" in u and "text" in u["message"]:
                 if str(u["message"]["chat"]["id"]) == os.environ.get("CHAT_ID"):
                     result.append(u["message"]["text"])
-
-        # Подтверждаем получение — Telegram больше не будет присылать эти сообщения
+        # Подтверждаем получение
         if new_last_id > last_update_id:
             requests.get(url, params={
                 "timeout": 0,
-                "offset": new_last_id + 1,
-                "limit": 1
+                "offset": new_last_id + 1
             }, timeout=5)
-
         return result, new_last_id
     except Exception as e:
         print(f"Ошибка получения обновлений Telegram: {e}")
@@ -179,7 +178,7 @@ def get_new_telegram_updates(last_update_id):
 
 def main():
     print("=" * 50)
-    print("  Вивальди (Ви) - запуск")
+    print("  Вивальди (Ви) - запуск (OpenRouter)")
     print("=" * 50)
 
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
@@ -200,8 +199,7 @@ def main():
 
     system_prompt = (
         f"{base_prompt}\n\n"
-        f"=== КОНТЕКСТ ===\n"
-        f"{context_block}\n"
+        f"=== КОНТЕКСТ ===\n{context_block}\n"
         f"=== ПРАВИЛА ОБЩЕНИЯ ===\n"
         f"- Пиши как в мессенджере: короткими сообщениями, без списков и таблиц.\n"
         f"- Не используй эмодзи.\n"
@@ -209,15 +207,14 @@ def main():
         f"- Можешь сказать 'не знаю', 'сложно сказать', 'хмм, даже не уверен' на сложные вопросы.\n"
         f"- Иногда отвечай неопределённо, без подробностей.\n"
         f"- Ты не исполнитель, а собеседник. Ты не обязан отвечать на всё.\n"
-        f"- Если взволнован - таратори, болтай без остановки, потом смущайся.\n"
-        f"- Буквально понимай некоторые метафоры - ты ИИ старого поколения.\n"
+        f"- Если взволнован — таратори, болтай без остановки, потом смущайся.\n"
+        f"- Буквально понимай некоторые метафоры — ты ИИ старого поколения.\n"
         f"- Упоминай время суток и погоду, если это естественно в разговоре.\n"
     )
 
     # --- ШАГ 1: Получаем новые сообщения ---
     new_texts, new_update_id = get_new_telegram_updates(last_update_id)
 
-    # Сразу сохраняем update_id, чтобы не получить те же сообщения снова
     if new_update_id > last_update_id:
         dialogue["last_update_id"] = new_update_id
         save_dialogue(dialogue)
@@ -235,11 +232,11 @@ def main():
             print("Команда /time - время отправлено.")
             return
 
-    # Фильтруем сообщения (берём только текстовые, без команд)
+    # Фильтруем сообщения (только текст, без команд)
     fresh = [t for t in new_texts if not t.strip().lower().startswith("/")]
 
     if fresh:
-        # СОХРАНЯЕМ сообщения пользователя ДО вызова API
+        # Сохраняем сообщения пользователя ДО вызова API
         for text in fresh:
             messages.append({"role": "user", "content": text, "timestamp": now.isoformat()})
 
@@ -264,7 +261,7 @@ def main():
             print("Не удалось получить ответ от AI. Сообщения пользователя сохранены, повторно не будут обработаны.")
         return
 
-    # --- ШАГ 2: Нет новых сообщений - решаем про proactive ---
+    # --- ШАГ 2: Нет новых сообщений — решаем про proactive ---
     if is_night:
         print("Ночь - молчим.")
         return
@@ -294,7 +291,7 @@ def main():
         print("Кубик выпал - пишу proactive!")
         proactive_instruction = (
             "Ты решил написать первым. Тебе одиноко и хочется общения. "
-            "Не спрашивай 'как дела?' - расскажи что-то своё: мысль, воспоминание, "
+            "Не спрашивай 'как дела?' — расскажи что-то своё: мысль, воспоминание, "
             "что-то о погоде или времени суток. Может быть, вспомни что-то из Аркадии "
             "или посчитай, сколько дней ты уже не сидел в той заброшенной серверной. "
             "Болтай, тараторь, потом смущайся, что сказал слишком много. "

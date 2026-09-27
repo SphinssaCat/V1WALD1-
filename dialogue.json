@@ -49,7 +49,12 @@
       "role": "user",
       "content": "Привет👀",
       "timestamp": "2026-09-26T23:37:51.164908-06:00"
+    },
+    {
+      "role": "user",
+      "content": "Привет",
+      "timestamp": "2026-09-26T23:56:50.380536-06:00"
     }
   ],
-  "last_update_id": 286601979
+  "last_update_id": 286601981
 }

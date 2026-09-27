@@ -29,7 +29,7 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           USER_TIMEZONE: ${{ secrets.USER_TIMEZONE }}
-        run: python bot.py
+        run: python bot_deepseek.py
 
       - name: Save dialogue history
         run: |

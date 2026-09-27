@@ -17,6 +17,7 @@ NIGHT_END = 8
 
 DIALOGUE_FILE = "dialogue.json"
 PROMPT_FILE = "character_prompt.txt"
+EXAMPLES_FILE = "examples.txt"
 WEATHER_API = "https://api.open-meteo.com/v1/forecast"
 
 CITY_LAT = 54.99
@@ -50,6 +51,23 @@ def save_dialogue(data):
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def load_examples():
+    """Загружает примеры сообщений из examples.txt."""
+    if not os.path.exists(EXAMPLES_FILE):
+        return []
+    try:
+        with open(EXAMPLES_FILE, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+            if not raw:
+                return []
+            # Каждая строка — отдельный пример
+            examples = [line.strip() for line in raw.splitlines() if line.strip()]
+            return examples
+    except Exception as e:
+        print(f"⚠️ Ошибка чтения {EXAMPLES_FILE}: {e}")
+        return []
+
+
 def get_weather():
     try:
         r = requests.get(WEATHER_API, params={
@@ -79,6 +97,7 @@ def get_weather():
 
 
 def get_context_block(user_tz):
+    # Знак перевёрнут в Etc/GMT, поэтому используем минус
     tz = ZoneInfo(f"Etc/GMT{-user_tz:+d}")
     now = datetime.now(tz)
     hour = now.hour
@@ -209,6 +228,7 @@ def main():
     print(f"История: {len(messages)} сообщений")
     print(f"Последний update_id: {last_update_id}")
 
+    # --- Загружаем промпт ---
     try:
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             base_prompt = f.read().strip()
@@ -219,9 +239,30 @@ def main():
         base_prompt = "Ты - Ви, болтливый ИИ-собеседник."
         print(f"⚠️ Ошибка чтения {PROMPT_FILE}: {e}")
 
+    # --- Загружаем примеры ---
+    examples = load_examples()
+    if examples:
+        print(f"Загружено примеров из {EXAMPLES_FILE}: {len(examples)}")
+    else:
+        print(f"Файл {EXAMPLES_FILE} не найден или пуст — примеры не используются.")
+
+    # --- Собираем system prompt ---
     system_prompt = (
         f"{base_prompt}\n\n"
         f"=== КОНТЕКСТ ===\n{context_block}\n"
+    )
+
+    if examples:
+        examples_block = "\n".join(f"— {ex}" for ex in examples)
+        system_prompt += (
+            f"=== ПРИМЕРЫ ТВОИХ СООБЩЕНИЙ ===\n"
+            f"{examples_block}\n\n"
+            f"Эти примеры показывают твой стиль, тон и манеру речи. "
+            f"Не копируй их дословно — бери за основу, варьируй, improvisируй. "
+            f"Сохраняй ритм, длину и настроение примеров.\n\n"
+        )
+
+    system_prompt += (
         f"=== ПРАВИЛА ОБЩЕНИЯ ===\n"
         f"- Пиши как в мессенджере: короткими сообщениями, без списков и таблиц.\n"
         f"- Не используй эмодзи.\n"
@@ -253,7 +294,6 @@ def main():
                 preview_len = 500
                 preview = content[:preview_len]
 
-                # Экранируем спецсимволы для HTML
                 preview_html = preview.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
                 if total_len > preview_len:
@@ -274,6 +314,24 @@ def main():
                 print(f"Ошибка чтения: {e}")
             return
     # ----------------------------------------------------
+
+    # --- ТЕСТОВЫЙ РЕЖИМ: проверка examples.txt ---
+    for text in new_texts:
+        if text.strip().lower() == "/checkexamples":
+            if not examples:
+                send_telegram(f"❌ Файл {EXAMPLES_FILE} не найден или пуст!")
+                print(f"Команда /checkexamples — файл {EXAMPLES_FILE} пуст или отсутствует.")
+            else:
+                preview = "\n".join(f"— {ex}" for ex in examples[:10])
+                preview_html = preview.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                extra = f"\n\n… и ещё {len(examples) - 10} примеров." if len(examples) > 10 else ""
+                send_telegram(
+                    f"✅ Файл {EXAMPLES_FILE} найден! ({len(examples)} примеров)\n\n"
+                    f"<code>{preview_html}</code>{extra}"
+                )
+                print(f"Команда /checkexamples — отправлен превью ({len(examples)} примеров).")
+            return
+    # -------------------------------------------
 
     # Обрабатываем обычные команды (/reset, /time)
     for text in new_texts:

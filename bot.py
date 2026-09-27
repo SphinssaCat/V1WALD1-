@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
-# ВАЖНО: deepseek/deepseek-r1:free — самая стабильная бесплатная модель на OpenRouter
 MODEL = "openrouter/free"
 MAX_PROACTIVE_PER_DAY = 2
 MIN_HOURS_BETWEEN = 5
@@ -111,9 +110,8 @@ def call_ai(system_prompt, messages):
 
     for attempt in range(max_retries):
         try:
-            # --- ДИАГНОСТИКА: перед запросом выводим, что отправляем ---
             print(f"[DEBUG] Попытка {attempt + 1}/{max_retries}: модель={MODEL}, кол-во сообщений={len(messages)}")
-            
+
             resp = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "system", "content": system_prompt}, *messages],
@@ -132,10 +130,7 @@ def call_ai(system_prompt, messages):
             return None
 
         except Exception as e:
-            # Самое важное: тут мы увидим реальную ошибку от OpenRouter
             print(f"[ERROR] Полный текст ошибки от API: {str(e)}")
-            # Если это 401 — библиотека обычно пишет: "Authentication Fails" или "Unauthorized"
-            # Если там есть request_id — это ключ к разбору проблемы в панели OpenRouter
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (2 ** attempt)
                 print(f"Повторяем через {wait_time} сек...")
@@ -219,6 +214,10 @@ def main():
             base_prompt = f.read().strip()
     except FileNotFoundError:
         base_prompt = "Ты - Ви, болтливый ИИ-собеседник."
+        print(f"⚠️ Файл {PROMPT_FILE} не найден — используется базовый промпт.")
+    except Exception as e:
+        base_prompt = "Ты - Ви, болтливый ИИ-собеседник."
+        print(f"⚠️ Ошибка чтения {PROMPT_FILE}: {e}")
 
     system_prompt = (
         f"{base_prompt}\n\n"
@@ -242,28 +241,41 @@ def main():
         dialogue["last_update_id"] = new_update_id
         save_dialogue(dialogue)
         last_update_id = new_update_id
-        
+
     # --- ТЕСТОВЫЙ РЕЖИМ: проверка character_prompt.txt ---
     for text in new_texts:
         if text.strip().lower() == "/checkprompt":
             try:
                 with open(PROMPT_FILE, "r", encoding="utf-8") as f:
                     content = f.read()
+
+                total_len = len(content)
+                preview_len = 500
+                preview = content[:preview_len]
+
+                # Экранируем спецсимволы для HTML
+                preview_html = preview.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+                if total_len > preview_len:
+                    extra = f"\n\n… и ещё {total_len - preview_len} символов."
+                else:
+                    extra = ""
+
                 send_telegram(
-                    f"✅ Файл {PROMPT_FILE} найден!\n\n"
-                    f"<code>{content}</code>"
+                    f"✅ Файл {PROMPT_FILE} найден! ({total_len} символов)\n\n"
+                    f"<code>{preview_html}</code>{extra}"
                 )
-                print("Команда /checkprompt - файл прочитан и отправлен.")
+                print(f"Команда /checkprompt - отправлен превью ({preview_len} из {total_len})")
             except FileNotFoundError:
                 send_telegram(f"❌ Файл {PROMPT_FILE} не найден!")
                 print(f"Ошибка: {PROMPT_FILE} отсутствует.")
             except Exception as e:
                 send_telegram(f"❌ Ошибка чтения файла: {e}")
                 print(f"Ошибка чтения: {e}")
-            return  # завершаем main(), чтобы не обрабатывать остальные сообщения в этом запуске
+            return
     # ----------------------------------------------------
 
-    # Обрабатываем команды
+    # Обрабатываем обычные команды (/reset, /time)
     for text in new_texts:
         if text.strip().lower() == "/reset":
             save_dialogue({"messages": [], "last_update_id": last_update_id})

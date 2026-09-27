@@ -22,9 +22,13 @@ WEATHER_API = "https://api.open-meteo.com/v1/forecast"
 CITY_LAT = 54.99
 CITY_LON = 73.37
 
+# --- КЛИЕНТ ---
+_raw_key = os.environ.get("OPENROUTER_API_KEY", "")
+API_KEY = _raw_key.strip()
+
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ.get("OPENROUTER_API_KEY", "")
+    api_key=API_KEY
 )
 
 
@@ -180,13 +184,15 @@ def main():
     print("  Вивальди (Ви) - запуск (OpenRouter)")
     print("=" * 50)
 
-    # --- ОТЛАДКА: проверяем, виден ли ключ ---
-    api_key_val = os.environ.get("OPENROUTER_API_KEY")
-    if api_key_val:
-        print(f"DEBUG: OPENROUTER_API_KEY = [скрыт, длина={len(api_key_val)}]")
+    # --- ОТЛАДКА: проверяем ключ ---
+    _key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if _key:
+        _prefix = _key[:8]
+        _suffix = _key[-4:]
+        print(f"DEBUG: ключ найден, длина={len(_key)}, начало={_prefix}..., конец=...{_suffix}")
     else:
         print("DEBUG: OPENROUTER_API_KEY = [ПУСТО]")
-    # ----------------------------------------
+    # --------------------------------
 
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
     dialogue = load_dialogue()
@@ -246,7 +252,6 @@ def main():
     fresh = [t for t in new_texts if not t.strip().lower().startswith("/")]
 
     if fresh:
-        # Сохраняем сообщения пользователя ДО вызова API
         for text in fresh:
             messages.append({
                 "role": "user",

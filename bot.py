@@ -24,7 +24,7 @@ CITY_LON = 73.37
 
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-    api_key=os.environ["OPENROUTER_API_KEY"]
+    api_key=os.environ.get("OPENROUTER_API_KEY", "")
 )
 
 
@@ -164,7 +164,6 @@ def get_new_telegram_updates(last_update_id):
             if "message" in u and "text" in u["message"]:
                 if str(u["message"]["chat"]["id"]) == os.environ.get("CHAT_ID"):
                     result.append(u["message"]["text"])
-        # Подтверждаем получение
         if new_last_id > last_update_id:
             requests.get(url, params={
                 "timeout": 0,
@@ -181,7 +180,13 @@ def main():
     print("  Вивальди (Ви) - запуск (OpenRouter)")
     print("=" * 50)
 
-    print(f"DEBUG: OPENROUTER_API_KEY = {'[скрыт]' if os.environ.get('OPENROUTER_API_KEY' else '[ПУСТО]'}")
+    # --- ОТЛАДКА: проверяем, виден ли ключ ---
+    api_key_val = os.environ.get("OPENROUTER_API_KEY")
+    if api_key_val:
+        print(f"DEBUG: OPENROUTER_API_KEY = [скрыт, длина={len(api_key_val)}]")
+    else:
+        print("DEBUG: OPENROUTER_API_KEY = [ПУСТО]")
+    # ----------------------------------------
 
     user_tz = int(os.environ.get("USER_TIMEZONE") or "6")
     dialogue = load_dialogue()
@@ -230,7 +235,10 @@ def main():
             print("Команда /reset - история очищена.")
             return
         if text.strip().lower() == "/time":
-            send_telegram(f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. Время UTC{user_tz:+d}.")
+            send_telegram(
+                f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. "
+                f"Время UTC{user_tz:+d}."
+            )
             print("Команда /time - время отправлено.")
             return
 
@@ -240,7 +248,11 @@ def main():
     if fresh:
         # Сохраняем сообщения пользователя ДО вызова API
         for text in fresh:
-            messages.append({"role": "user", "content": text, "timestamp": now.isoformat()})
+            messages.append({
+                "role": "user",
+                "content": text,
+                "timestamp": now.isoformat()
+            })
 
         dialogue["messages"] = messages
         save_dialogue(dialogue)
@@ -255,7 +267,12 @@ def main():
         response = call_ai(system_prompt, ai_messages)
         if response:
             send_telegram(response)
-            messages.append({"role": "assistant", "content": response, "is_proactive": False, "timestamp": now.isoformat()})
+            messages.append({
+                "role": "assistant",
+                "content": response,
+                "is_proactive": False,
+                "timestamp": now.isoformat()
+            })
             dialogue["messages"] = messages
             save_dialogue(dialogue)
             print("Ответ отправлен.")
@@ -311,7 +328,12 @@ def main():
         response = call_ai(system_prompt, ai_messages)
         if response:
             send_telegram(response)
-            messages.append({"role": "assistant", "content": response, "is_proactive": True, "timestamp": now.isoformat()})
+            messages.append({
+                "role": "assistant",
+                "content": response,
+                "is_proactive": True,
+                "timestamp": now.isoformat()
+            })
             dialogue["messages"] = messages
             save_dialogue(dialogue)
             print("Proactive-сообщение отправлено!")

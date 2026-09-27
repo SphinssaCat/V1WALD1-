@@ -79,7 +79,7 @@ def get_weather():
 
 
 def get_context_block(user_tz):
-    tz = ZoneInfo(f"Etc/GMT{user_tz:+d}")
+    tz = ZoneInfo(f"Etc/GMT{-user_tz:+d}")
     now = datetime.now(tz)
     hour = now.hour
     date_str = now.strftime("%Y-%m-%d")

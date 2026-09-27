@@ -1,4 +1,11 @@
 {
-  "messages": [],
-  "last_update_id": 0
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "\n\nПривет! Привет-привет-привет! Как твои дела?",
+      "is_proactive": true,
+      "timestamp": "2026-09-27T16:03:32.549597+06:00"
+    }
+  ],
+  "last_update_id": 286601995
 }

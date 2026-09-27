@@ -8,7 +8,8 @@ from zoneinfo import ZoneInfo
 from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
-MODEL = "meta-llama/llama-3.1-8b-instruct:free"
+# ВАЖНО: deepseek/deepseek-r1:free — самая стабильная бесплатная модель на OpenRouter
+MODEL = "deepseek/deepseek-r1:free"
 MAX_PROACTIVE_PER_DAY = 2
 MIN_HOURS_BETWEEN = 5
 PROACTIVE_CHANCE = 0.25
@@ -110,6 +111,9 @@ def call_ai(system_prompt, messages):
 
     for attempt in range(max_retries):
         try:
+            # --- ДИАГНОСТИКА: перед запросом выводим, что отправляем ---
+            print(f"[DEBUG] Попытка {attempt + 1}/{max_retries}: модель={MODEL}, кол-во сообщений={len(messages)}")
+            
             resp = client.chat.completions.create(
                 model=MODEL,
                 messages=[{"role": "system", "content": system_prompt}, *messages],
@@ -119,18 +123,24 @@ def call_ai(system_prompt, messages):
             return resp.choices[0].message.content
 
         except RateLimitError as e:
-            print(f"Лимит API (попытка {attempt + 1}/{max_retries}): {e}")
+            print(f"Лимит API: {e}")
             if attempt < max_retries - 1:
                 wait_time = retry_delay * (2 ** attempt)
                 print(f"Ждём {wait_time} секунд перед повтором...")
                 time.sleep(wait_time)
                 continue
-            else:
-                print("Все попытки исчерпаны — лимит не снялся.")
-                return None
+            return None
 
         except Exception as e:
-            print(f"Ошибка AI: {e}")
+            # Самое важное: тут мы увидим реальную ошибку от OpenRouter
+            print(f"[ERROR] Полный текст ошибки от API: {str(e)}")
+            # Если это 401 — библиотека обычно пишет: "Authentication Fails" или "Unauthorized"
+            # Если там есть request_id — это ключ к разбору проблемы в панели OpenRouter
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (2 ** attempt)
+                print(f"Повторяем через {wait_time} сек...")
+                time.sleep(wait_time)
+                continue
             return None
 
     return None

@@ -9,7 +9,7 @@ from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
 # ВАЖНО: deepseek/deepseek-r1:free — самая стабильная бесплатная модель на OpenRouter
-MODEL = "deepseek/deepseek-r1:free"
+MODEL = "openrouter/free"
 MAX_PROACTIVE_PER_DAY = 2
 MIN_HOURS_BETWEEN = 5
 PROACTIVE_CHANCE = 0.25

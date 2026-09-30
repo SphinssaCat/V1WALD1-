@@ -9,9 +9,6 @@ from openai import OpenAI, RateLimitError
 
 # --- НАСТРОЙКИ ---
 MODEL = "openrouter/free"
-MAX_PROACTIVE_PER_DAY = 2
-MIN_HOURS_BETWEEN = 5
-PROACTIVE_CHANCE = 0.25
 NIGHT_START = 23
 NIGHT_END = 8
 
@@ -52,7 +49,6 @@ def save_dialogue(data):
 
 
 def load_examples():
-    """Загружает примеры сообщений из examples.txt."""
     if not os.path.exists(EXAMPLES_FILE):
         return []
     try:
@@ -60,7 +56,6 @@ def load_examples():
             raw = f.read().strip()
             if not raw:
                 return []
-            # Каждая строка — отдельный пример
             examples = [line.strip() for line in raw.splitlines() if line.strip()]
             return examples
     except Exception as e:
@@ -97,7 +92,7 @@ def get_weather():
 
 
 def get_context_block(user_tz):
-    # Знак перевёрнут в Etc/GMT, поэтому используем минус
+    # Знак перевёрнут в Etc/GMT, поэтому минус
     tz = ZoneInfo(f"Etc/GMT{-user_tz:+d}")
     now = datetime.now(tz)
     hour = now.hour
@@ -247,10 +242,7 @@ def main():
         print(f"Файл {EXAMPLES_FILE} не найден или пуст — примеры не используются.")
 
     # --- Собираем system prompt ---
-    system_prompt = (
-        f"{base_prompt}\n\n"
-        f"=== КОНТЕКСТ ===\n{context_block}\n"
-    )
+    system_prompt = f"{base_prompt}\n\n=== КОНТЕКСТ ===\n{context_block}\n"
 
     if examples:
         examples_block = "\n".join(f"— {ex}" for ex in examples)
@@ -258,7 +250,7 @@ def main():
             f"=== ПРИМЕРЫ ТВОИХ СООБЩЕНИЙ ===\n"
             f"{examples_block}\n\n"
             f"Эти примеры показывают твой стиль, тон и манеру речи. "
-            f"Не копируй их дословно — бери за основу, варьируй, improvisируй. "
+            f"Не копируй их дословно — бери за основу, варьируй. "
             f"Сохраняй ритм, длину и настроение примеров.\n\n"
         )
 
@@ -283,35 +275,24 @@ def main():
         save_dialogue(dialogue)
         last_update_id = new_update_id
 
+    if not new_texts:
+        print("Нет новых сообщений — молчу.")
+        return
+
     # --- ТЕСТОВЫЙ РЕЖИМ: проверка character_prompt.txt ---
     for text in new_texts:
         if text.strip().lower() == "/checkprompt":
             try:
                 with open(PROMPT_FILE, "r", encoding="utf-8") as f:
                     content = f.read()
-
                 total_len = len(content)
-                preview_len = 500
-                preview = content[:preview_len]
-
+                preview = content[:500]
                 preview_html = preview.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-                if total_len > preview_len:
-                    extra = f"\n\n… и ещё {total_len - preview_len} символов."
-                else:
-                    extra = ""
-
-                send_telegram(
-                    f"✅ Файл {PROMPT_FILE} найден! ({total_len} символов)\n\n"
-                    f"<code>{preview_html}</code>{extra}"
-                )
-                print(f"Команда /checkprompt - отправлен превью ({preview_len} из {total_len})")
+                extra = f"\n\n… и ещё {total_len - 500} символов." if total_len > 500 else ""
+                send_telegram(f"✅ Файл {PROMPT_FILE} ({total_len} симв.)\n\n<code>{preview_html}</code>{extra}")
+                print(f"Команда /checkprompt - отправлен превью.")
             except FileNotFoundError:
                 send_telegram(f"❌ Файл {PROMPT_FILE} не найден!")
-                print(f"Ошибка: {PROMPT_FILE} отсутствует.")
-            except Exception as e:
-                send_telegram(f"❌ Ошибка чтения файла: {e}")
-                print(f"Ошибка чтения: {e}")
             return
     # ----------------------------------------------------
 
@@ -320,27 +301,25 @@ def main():
         if text.strip().lower() == "/checkexamples":
             if not examples:
                 send_telegram(f"❌ Файл {EXAMPLES_FILE} не найден или пуст!")
-                print(f"Команда /checkexamples — файл {EXAMPLES_FILE} пуст или отсутствует.")
             else:
                 preview = "\n".join(f"— {ex}" for ex in examples[:10])
                 preview_html = preview.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 extra = f"\n\n… и ещё {len(examples) - 10} примеров." if len(examples) > 10 else ""
-                send_telegram(
-                    f"✅ Файл {EXAMPLES_FILE} найден! ({len(examples)} примеров)\n\n"
-                    f"<code>{preview_html}</code>{extra}"
-                )
-                print(f"Команда /checkexamples — отправлен превью ({len(examples)} примеров).")
+                send_telegram(f"✅ {EXAMPLES_FILE} ({len(examples)} примеров)\n\n<code>{preview_html}</code>{extra}")
             return
     # -------------------------------------------
 
-    # Обрабатываем обычные команды (/reset, /time)
+    # --- Обрабатываем команды ---
     for text in new_texts:
-        if text.strip().lower() == "/reset":
+        cmd = text.strip().lower()
+
+        if cmd == "/reset":
             save_dialogue({"messages": [], "last_update_id": last_update_id})
             send_telegram("...всё. Я забыл. Чистый лист. Ну, привет.")
             print("Команда /reset - история очищена.")
             return
-        if text.strip().lower() == "/time":
+
+        if cmd == "/time":
             send_telegram(
                 f"Сейчас {now.strftime('%H:%M')}, {now.strftime('%Y-%m-%d')}. "
                 f"Время UTC{user_tz:+d}."
@@ -348,104 +327,55 @@ def main():
             print("Команда /time - время отправлено.")
             return
 
-    # Фильтруем сообщения (только текст, без команд)
-    fresh = [t for t in new_texts if not t.strip().lower().startswith("/")]
-
-    if fresh:
-        for text in fresh:
-            messages.append({
-                "role": "user",
-                "content": text,
-                "timestamp": now.isoformat()
-            })
-
-        dialogue["messages"] = messages
-        save_dialogue(dialogue)
-
-        print(f"Получено новых сообщений: {len(fresh)}")
-        print(f"Отвечаю на: {fresh[-1][:80]}...")
-
-        ai_messages = [
-            {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
-            for m in messages
-        ]
-        response = call_ai(system_prompt, ai_messages)
-        if response:
-            send_telegram(response)
-            messages.append({
-                "role": "assistant",
-                "content": response,
-                "is_proactive": False,
-                "timestamp": now.isoformat()
-            })
-            dialogue["messages"] = messages
-            save_dialogue(dialogue)
-            print("Ответ отправлен.")
-        else:
-            print("Не удалось получить ответ от AI. Сообщения пользователя сохранены, повторно не будут обработаны.")
-        return
-
-    # --- ШАГ 2: Нет новых сообщений — решаем про proactive ---
-    if is_night:
-        print("Ночь - молчим.")
-        return
-
-    today_str = now.strftime("%Y-%m-%d")
-    proactive_today = 0
-    last_proactive_time = None
-    for msg in messages:
-        if msg.get("is_proactive") and msg.get("timestamp", "").startswith(today_str):
-            proactive_today += 1
-        if msg.get("is_proactive") and msg.get("timestamp"):
-            last_proactive_time = datetime.fromisoformat(msg["timestamp"])
-
-    print(f"Proactive за сегодня: {proactive_today}/{MAX_PROACTIVE_PER_DAY}")
-
-    if proactive_today >= MAX_PROACTIVE_PER_DAY:
-        print("Уже написал максимум на сегодня - молчим.")
-        return
-
-    if last_proactive_time:
-        diff_hours = (now - last_proactive_time).total_seconds() / 3600
-        if diff_hours < MIN_HOURS_BETWEEN:
-            print(f"Прошло {diff_hours:.1f} ч (мин. {MIN_HOURS_BETWEEN}) - молчим.")
+        if cmd == "/clear2":
+            if len(messages) >= 2:
+                messages = messages[:-2]
+                dialogue["messages"] = messages
+                save_dialogue(dialogue)
+                send_telegram("✅ Последние 2 сообщения удалены.")
+                print("Команда /clear2 - удалено 2 сообщения.")
+            else:
+                send_telegram("❌ В истории меньше 2 сообщений.")
             return
 
-    if random.random() < PROACTIVE_CHANCE:
-        print("Кубик выпал - пишу proactive!")
-        proactive_instruction = (
-            "Ты решил написать первым. Тебе одиноко и хочется общения. "
-            "Не спрашивай 'как дела?' — расскажи что-то своё: мысль, воспоминание, "
-            "что-то о погоде или времени суток. Может быть, вспомни что-то из Аркадии "
-            "или посчитай, сколько дней ты уже не сидел в той заброшенной серверной. "
-            "Болтай, тараторь, потом смущайся, что сказал слишком много. "
-            "Будь естественным, будто тебе правда не с кем было поговорить."
-        )
-        ai_messages = [
-            {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
-            for m in messages
-        ]
-        if not ai_messages:
-            ai_messages.append({"role": "user", "content": "..."})
-        else:
-            ai_messages.append({"role": "user", "content": proactive_instruction})
+    # --- Фильтруем обычные сообщения (не команды) ---
+    fresh = [t for t in new_texts if not t.strip().lower().startswith("/")]
 
-        response = call_ai(system_prompt, ai_messages)
-        if response:
-            send_telegram(response)
-            messages.append({
-                "role": "assistant",
-                "content": response,
-                "is_proactive": True,
-                "timestamp": now.isoformat()
-            })
-            dialogue["messages"] = messages
-            save_dialogue(dialogue)
-            print("Proactive-сообщение отправлено!")
-        else:
-            print("Не удалось получить ответ от AI.")
+    if not fresh:
+        return
+
+    print(f"Получено новых сообщений: {len(fresh)}")
+    print(f"Отвечаю на: {fresh[-1][:80]}...")
+
+    for text in fresh:
+        messages.append({
+            "role": "user",
+            "content": text,
+            "timestamp": now.isoformat()
+        })
+
+    dialogue["messages"] = messages
+    save_dialogue(dialogue)
+
+    ai_messages = [
+        {"role": "user" if m["role"] == "user" else "assistant", "content": m["content"]}
+        for m in messages
+    ]
+
+    response = call_ai(system_prompt, ai_messages)
+    if response:
+        send_telegram(response)
+        messages.append({
+            "role": "assistant",
+            "content": response,
+            "is_proactive": False,
+            "timestamp": now.isoformat()
+        })
+        dialogue["messages"] = messages
+        save_dialogue(dialogue)
+        print("Ответ отправлен.")
     else:
-        print("Кубик не выпал - молчим.")
+        print("Не удалось получить ответ от AI. Сообщения пользователя сохранены.")
 
 
 if __name__ == "__main__":
